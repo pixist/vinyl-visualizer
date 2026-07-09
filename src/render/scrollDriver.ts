@@ -25,21 +25,22 @@ export function advanceDeck(
   scratchL: Float32Array,
   scratchR: Float32Array,
   maxColumns: number,
+  samplesPerColumn: number = SAMPLES_PER_COLUMN,
 ): number {
   const written = stream.left.totalWritten();
   const head = written - stream.delaySamples;
 
   // On first frame (or after a delay jump), start near the head so we don't
   // try to redraw seconds of backlog at once.
-  if (consumedHead === null || head - consumedHead > maxColumns * SAMPLES_PER_COLUMN) {
+  if (consumedHead === null || head - consumedHead > maxColumns * samplesPerColumn) {
     return head;
   }
 
   const avail = head - consumedHead;
-  const columns = Math.min(maxColumns, Math.floor(avail / SAMPLES_PER_COLUMN));
+  const columns = Math.min(maxColumns, Math.floor(avail / samplesPerColumn));
   if (columns <= 0) return consumedHead;
 
-  const blockLen = columns * SAMPLES_PER_COLUMN;
+  const blockLen = columns * samplesPerColumn;
   const end = consumedHead + blockLen;
   const delayForBlock = written - end;
 

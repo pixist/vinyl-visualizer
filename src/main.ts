@@ -1,9 +1,9 @@
-import { loadConfig, saveConfig, clampDelayMs, clampGainDb, type AppConfig, type DeckConfig } from "./config/decks";
+import { loadConfig, saveConfig, clampDelayMs, clampGainDb, ZOOM_LEVELS, type AppConfig, type DeckConfig } from "./config/decks";
 import { dbToLinear } from "./util/channelMix";
 import { startCapture, listInputDevices, type CaptureHandle } from "./audio/captureManager";
 import { mountDecks, populateDeviceOptions, type DeckElements } from "./render/deckView";
 import { WaveformRenderer } from "./render/waveformRenderer";
-import { advanceDeck, SAMPLES_PER_COLUMN, type DeckStreams } from "./render/scrollDriver";
+import { advanceDeck, type DeckStreams } from "./render/scrollDriver";
 
 const MAX_COLUMNS = 2048; // upper bound on columns redrawn in one frame
 
@@ -24,7 +24,7 @@ let runtimes: DeckRuntime[] = [];
 let running = false;
 let rafId = 0;
 
-const scratchL = new Float32Array(MAX_COLUMNS * SAMPLES_PER_COLUMN);
+const scratchL = new Float32Array(MAX_COLUMNS * Math.max(...ZOOM_LEVELS));
 const scratchR = new Float32Array(scratchL.length);
 
 interface DeckRuntime {
@@ -161,7 +161,7 @@ function frame(): void {
       rt.stream.gain = dbToLinear(deck.gainDb);
     }
     const cap = Math.min(rt.canvas.width, MAX_COLUMNS);
-    rt.consumed = advanceDeck(rt.stream, rt.consumed, scratchL, scratchR, cap);
+    rt.consumed = advanceDeck(rt.stream, rt.consumed, scratchL, scratchR, cap, config.samplesPerColumn);
   }
   rafId = requestAnimationFrame(frame);
 }

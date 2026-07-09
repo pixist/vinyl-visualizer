@@ -78,4 +78,13 @@ describe("advanceDeck", () => {
     // Backlog exceeded the window, so it resnaps to head rather than redraw all.
     expect(consumed).toBe(100 * SAMPLES_PER_COLUMN);
   });
+
+  it("paces columns by the given samplesPerColumn", () => {
+    const { writer, renderer, stream } = makeStream(48000);
+    let consumed = advanceDeck(stream, null, scratch, scratch, 32, 64); // snap at 0
+    writer.write(new Float32Array(3 * 64 + 5));
+    consumed = advanceDeck(stream, consumed, scratch, scratch, 32, 64);
+    expect(renderer.pushes[0]).toHaveLength(3);
+    expect(consumed).toBe(3 * 64);
+  });
 });
