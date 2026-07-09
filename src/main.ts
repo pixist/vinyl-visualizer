@@ -1,7 +1,8 @@
 import { loadConfig, saveConfig, clampDelayMs, clampGainDb, clampSamplesPerColumn, ZOOM_LEVELS, type AppConfig, type DeckConfig } from "./config/decks";
+import type { ChannelMode } from "./util/channelMix";
 import { dbToLinear } from "./util/channelMix";
 import { startCapture, listInputDevices, type CaptureHandle } from "./audio/captureManager";
-import { mountDecks, populateDeviceOptions, type DeckElements } from "./render/deckView";
+import { mountDecks, populateDeviceOptions, populateChannelOptions, type DeckElements } from "./render/deckView";
 import { WaveformRenderer } from "./render/waveformRenderer";
 import { advanceDeck, type DeckStreams } from "./render/scrollDriver";
 
@@ -16,6 +17,7 @@ const views: Map<string, DeckElements> = mountDecks(decksEl, config, {
   onDelayChange,
   onGainChange,
   onDeviceChange,
+  onRoutingChange,
 });
 
 const zoomSelect = document.getElementById("zoomSelect") as HTMLSelectElement;
@@ -87,6 +89,19 @@ function onDeviceChange(deckId: string, deviceId: string | null): void {
   if (running) void restart(); // re-open captures so the new routing takes effect
 }
 
+function onRoutingChange(
+  deckId: string,
+  patch: { mode?: ChannelMode; leftChannel?: number; rightChannel?: number | null },
+): void {
+  const deck = config.decks.find((d) => d.id === deckId);
+  if (!deck) return;
+  if (patch.mode !== undefined) deck.mode = patch.mode;
+  if (patch.leftChannel !== undefined) deck.leftChannel = patch.leftChannel;
+  if (patch.rightChannel !== undefined) deck.rightChannel = patch.rightChannel;
+  saveConfig(localStorage, config);
+  if (running) void restart(); // channel demand may have changed
+}
+
 async function startAll(): Promise<void> {
   if (running) return;
   setStatus("requesting input...");
@@ -105,6 +120,11 @@ async function startAll(): Promise<void> {
     }
     await refreshDeviceLabels(); // labels are available once permission is granted
     buildRuntimes();
+    populateChannelOptions(
+      views,
+      new Map(config.decks.map((d) => [d.id, handles.get(deviceKey(d))?.channelCount ?? 2])),
+      config,
+    );
     running = true;
     startBtn.textContent = "Stop";
     setStatus(statusSummary());
