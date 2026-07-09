@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { defaultConfig, normalize, clampDelayMs, clampGainDb, loadConfig, saveConfig, MAX_DELAY_MS, MAX_GAIN_DB, MIN_GAIN_DB } from "./decks";
+import { defaultConfig, normalize, clampDelayMs, clampGainDb, loadConfig, saveConfig, MAX_DELAY_MS, MAX_GAIN_DB, MIN_GAIN_DB, clampSamplesPerColumn } from "./decks";
 
 class MemStorage {
   private m = new Map<string, string>();
@@ -99,5 +99,22 @@ describe("loadConfig/saveConfig round-trip", () => {
     const s = new MemStorage() as unknown as Storage;
     s.setItem("vinyl-visualizer.config.v2", "{not json");
     expect(loadConfig(s)).toEqual(defaultConfig());
+  });
+});
+
+describe("samplesPerColumn", () => {
+  it("defaults to 256", () => {
+    expect(defaultConfig().samplesPerColumn).toBe(256);
+  });
+  it("accepts only known zoom levels", () => {
+    expect(clampSamplesPerColumn(128)).toBe(128);
+    expect(clampSamplesPerColumn(300)).toBe(256);
+    expect(clampSamplesPerColumn("512")).toBe(256);
+    expect(clampSamplesPerColumn(undefined)).toBe(256);
+  });
+  it("normalizes samplesPerColumn from storage", () => {
+    expect(normalize({ decks: [{}], samplesPerColumn: 1024 }).samplesPerColumn).toBe(1024);
+    expect(normalize({ decks: [{}], samplesPerColumn: 7 }).samplesPerColumn).toBe(256);
+    expect(normalize({ decks: [{}] }).samplesPerColumn).toBe(256);
   });
 });

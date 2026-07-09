@@ -20,12 +20,22 @@ export interface DeckConfig {
 
 export interface AppConfig {
   decks: DeckConfig[];
+  samplesPerColumn: number;
 }
 
 export const MAX_DELAY_MS = 200;
 export const MIN_GAIN_DB = -18;
 export const MAX_GAIN_DB = 18;
+export const ZOOM_LEVELS = [64, 128, 256, 512, 1024] as const;
+export const DEFAULT_SAMPLES_PER_COLUMN = 256;
 const STORAGE_KEY = "vinyl-visualizer.config.v2";
+
+/** Validate a zoom level from UI or storage; unknown values fall back to default. */
+export function clampSamplesPerColumn(v: unknown): number {
+  return typeof v === "number" && (ZOOM_LEVELS as readonly number[]).includes(v)
+    ? v
+    : DEFAULT_SAMPLES_PER_COLUMN;
+}
 
 export function defaultConfig(): AppConfig {
   return {
@@ -33,6 +43,7 @@ export function defaultConfig(): AppConfig {
       { id: "a", label: "Deck A", deviceId: null, leftChannel: 0, rightChannel: 1, mode: "mono-sum", delayMs: 0, gainDb: 0, color: "#4fd1ff" },
       { id: "b", label: "Deck B", deviceId: null, leftChannel: 0, rightChannel: 1, mode: "mono-sum", delayMs: 0, gainDb: 0, color: "#ff7b4f" },
     ],
+    samplesPerColumn: DEFAULT_SAMPLES_PER_COLUMN,
   };
 }
 
@@ -71,7 +82,7 @@ export function normalize(parsed: unknown): AppConfig {
   const decksRaw = (parsed as { decks?: unknown }).decks;
   if (!Array.isArray(decksRaw) || decksRaw.length === 0) return fallback;
   const decks = decksRaw.map((d, i) => normalizeDeck(d, fallback.decks[i % fallback.decks.length]!));
-  return { decks };
+  return { decks, samplesPerColumn: clampSamplesPerColumn((parsed as { samplesPerColumn?: unknown }).samplesPerColumn) };
 }
 
 function normalizeDeck(d: unknown, base: DeckConfig): DeckConfig {
