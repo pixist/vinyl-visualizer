@@ -26,6 +26,7 @@ body {
 }
 #toolbar button:hover { background: #29313d; }
 #toolbar select { background: #12161d; color: #d7dde5; border: 1px solid #2c3340; border-radius: 6px; padding: 5px; }
+.zoom { display: inline-flex; align-items: center; gap: 6px; margin-left: 16px; opacity: 0.85; }
 #status { margin-left: auto; opacity: 0.7; }
 #decks { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
 .deck { background: #0e1116; border: 1px solid #1b2029; border-radius: 8px; overflow: hidden; }

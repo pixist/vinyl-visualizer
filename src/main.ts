@@ -1,4 +1,4 @@
-import { loadConfig, saveConfig, clampDelayMs, clampGainDb, ZOOM_LEVELS, type AppConfig, type DeckConfig } from "./config/decks";
+import { loadConfig, saveConfig, clampDelayMs, clampGainDb, clampSamplesPerColumn, ZOOM_LEVELS, type AppConfig, type DeckConfig } from "./config/decks";
 import { dbToLinear } from "./util/channelMix";
 import { startCapture, listInputDevices, type CaptureHandle } from "./audio/captureManager";
 import { mountDecks, populateDeviceOptions, type DeckElements } from "./render/deckView";
@@ -16,6 +16,23 @@ const views: Map<string, DeckElements> = mountDecks(decksEl, config, {
   onDelayChange,
   onGainChange,
   onDeviceChange,
+});
+
+const zoomSelect = document.getElementById("zoomSelect") as HTMLSelectElement;
+for (const spc of ZOOM_LEVELS) {
+  const opt = document.createElement("option");
+  opt.value = String(spc);
+  opt.textContent = `${(spc / 48).toFixed(1)} ms/px`;
+  zoomSelect.append(opt);
+}
+zoomSelect.value = String(config.samplesPerColumn);
+zoomSelect.addEventListener("change", () => {
+  config.samplesPerColumn = clampSamplesPerColumn(Number(zoomSelect.value));
+  saveConfig(localStorage, config);
+  for (const rt of runtimes) {
+    rt.consumed = null; // resnap so we don't redraw a huge backlog at the new scale
+    rt.stream.renderer.clear();
+  }
 });
 
 // One capture per distinct device key (deviceId, or "" for the system default).
