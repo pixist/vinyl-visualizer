@@ -1,0 +1,39 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 13px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+  background: #0a0c10;
+  color: #d7dde5;
+}
+#toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid #1b2029;
+  position: sticky;
+  top: 0;
+  background: #0a0c10;
+}
+#toolbar button {
+  background: #1f2530;
+  color: #d7dde5;
+  border: 1px solid #2c3340;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+#toolbar button:hover { background: #29313d; }
+#toolbar select { background: #12161d; color: #d7dde5; border: 1px solid #2c3340; border-radius: 6px; padding: 5px; }
+#status { margin-left: auto; opacity: 0.7; }
+#decks { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.deck { background: #0e1116; border: 1px solid #1b2029; border-radius: 8px; overflow: hidden; }
+.deck-head { display: flex; align-items: center; gap: 16px; padding: 8px 12px; }
+.deck-label { font-weight: 600; letter-spacing: 0.04em; }
+.deck-device { background: #12161d; color: #d7dde5; border: 1px solid #2c3340; border-radius: 6px; padding: 4px 6px; max-width: 260px; }
+.delay, .gain { display: flex; align-items: center; gap: 8px; opacity: 0.85; }
+.gain { margin-left: auto; }
+.delay input[type="range"] { width: 180px; }
+.gain input[type="range"] { width: 120px; }
+.deck-canvas { display: block; width: 100%; height: 160px; background: #06080b; }
