@@ -1,0 +1,113 @@
+# Review package: 00295ca..HEAD
+
+## Commits
+dbee4db feat: global zoom selector
+
+## Files changed
+ index.html    |  1 +
+ src/main.ts   | 19 ++++++++++++++++++-
+ src/style.css |  1 +
+ 3 files changed, 20 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/index.html b/index.html
+index 7f9acad..6683f9e 100644
+--- a/index.html
++++ b/index.html
+@@ -2,16 +2,17 @@
+ <html lang="en">
+   <head>
+     <meta charset="UTF-8" />
+     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+     <title>Vinyl Visualizer</title>
+     <link rel="stylesheet" href="/src/style.css" />
+   </head>
+   <body>
+     <header id="toolbar">
+       <button id="startBtn">Start capture</button>
++      <label class="zoom">zoom <select id="zoomSelect"></select></label>
+       <span id="status">idle</span>
+     </header>
+     <main id="decks"></main>
+     <script type="module" src="/src/main.ts"></script>
+   </body>
+ </html>
+diff --git a/src/main.ts b/src/main.ts
+index a77a16a..19399ab 100644
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -1,30 +1,47 @@
+-import { loadConfig, saveConfig, clampDelayMs, clampGainDb, ZOOM_LEVELS, type AppConfig, type DeckConfig } from "./config/decks";
++import { loadConfig, saveConfig, clampDelayMs, clampGainDb, clampSamplesPerColumn, ZOOM_LEVELS, type AppConfig, type DeckConfig } from "./config/decks";
+ import { dbToLinear } from "./util/channelMix";
+ import { startCapture, listInputDevices, type CaptureHandle } from "./audio/captureManager";
+ import { mountDecks, populateDeviceOptions, type DeckElements } from "./render/deckView";
+ import { WaveformRenderer } from "./render/waveformRenderer";
+ import { advanceDeck, type DeckStreams } from "./render/scrollDriver";
+ 
+ const MAX_COLUMNS = 2048; // upper bound on columns redrawn in one frame
+ 
+ const startBtn = document.getElementById("startBtn") as HTMLButtonElement;
+ const statusEl = document.getElementById("status") as HTMLSpanElement;
+ const decksEl = document.getElementById("decks") as HTMLElement;
+ 
+ const config: AppConfig = loadConfig(localStorage);
+ const views: Map<string, DeckElements> = mountDecks(decksEl, config, {
+   onDelayChange,
+   onGainChange,
+   onDeviceChange,
+ });
+ 
++const zoomSelect = document.getElementById("zoomSelect") as HTMLSelectElement;
++for (const spc of ZOOM_LEVELS) {
++  const opt = document.createElement("option");
++  opt.value = String(spc);
++  opt.textContent = `${(spc / 48).toFixed(1)} ms/px`;
++  zoomSelect.append(opt);
++}
++zoomSelect.value = String(config.samplesPerColumn);
++zoomSelect.addEventListener("change", () => {
++  config.samplesPerColumn = clampSamplesPerColumn(Number(zoomSelect.value));
++  saveConfig(localStorage, config);
++  for (const rt of runtimes) {
++    rt.consumed = null; // resnap so we don't redraw a huge backlog at the new scale
++    rt.stream.renderer.clear();
++  }
++});
++
+ // One capture per distinct device key (deviceId, or "" for the system default).
+ const handles = new Map<string, CaptureHandle>();
+ let runtimes: DeckRuntime[] = [];
+ let running = false;
+ let rafId = 0;
+ 
+ const scratchL = new Float32Array(MAX_COLUMNS * Math.max(...ZOOM_LEVELS));
+ const scratchR = new Float32Array(scratchL.length);
+ 
+ interface DeckRuntime {
+diff --git a/src/style.css b/src/style.css
+index f3b68ba..92d9400 100644
+--- a/src/style.css
++++ b/src/style.css
+@@ -19,20 +19,21 @@ body {
+ #toolbar button {
+   background: #1f2530;
+   color: #d7dde5;
+   border: 1px solid #2c3340;
+   border-radius: 6px;
+   padding: 6px 14px;
+   cursor: pointer;
+ }
+ #toolbar button:hover { background: #29313d; }
+ #toolbar select { background: #12161d; color: #d7dde5; border: 1px solid #2c3340; border-radius: 6px; padding: 5px; }
++.zoom { display: inline-flex; align-items: center; gap: 6px; margin-left: 16px; opacity: 0.85; }
+ #status { margin-left: auto; opacity: 0.7; }
+ #decks { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+ .deck { background: #0e1116; border: 1px solid #1b2029; border-radius: 8px; overflow: hidden; }
+ .deck-head { display: flex; align-items: center; gap: 16px; padding: 8px 12px; }
+ .deck-label { font-weight: 600; letter-spacing: 0.04em; }
+ .deck-device { background: #12161d; color: #d7dde5; border: 1px solid #2c3340; border-radius: 6px; padding: 4px 6px; max-width: 260px; }
+ .delay, .gain { display: flex; align-items: center; gap: 8px; opacity: 0.85; }
+ .gain { margin-left: auto; }
+ .delay input[type="range"] { width: 180px; }
+ .gain input[type="range"] { width: 120px; }

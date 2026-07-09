@@ -1,0 +1,149 @@
+# Review package: 09ac51f..HEAD
+
+## Commits
+00295ca feat: thread samplesPerColumn through advanceDeck
+
+## Files changed
+ src/main.ts                     | 8 ++++----
+ src/render/scrollDriver.test.ts | 9 +++++++++
+ src/render/scrollDriver.ts      | 7 ++++---
+ 3 files changed, 17 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/src/main.ts b/src/main.ts
+index 6b0fdf0..a77a16a 100644
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -1,37 +1,37 @@
+-import { loadConfig, saveConfig, clampDelayMs, clampGainDb, type AppConfig, type DeckConfig } from "./config/decks";
++import { loadConfig, saveConfig, clampDelayMs, clampGainDb, ZOOM_LEVELS, type AppConfig, type DeckConfig } from "./config/decks";
+ import { dbToLinear } from "./util/channelMix";
+ import { startCapture, listInputDevices, type CaptureHandle } from "./audio/captureManager";
+ import { mountDecks, populateDeviceOptions, type DeckElements } from "./render/deckView";
+ import { WaveformRenderer } from "./render/waveformRenderer";
+-import { advanceDeck, SAMPLES_PER_COLUMN, type DeckStreams } from "./render/scrollDriver";
++import { advanceDeck, type DeckStreams } from "./render/scrollDriver";
+ 
+ const MAX_COLUMNS = 2048; // upper bound on columns redrawn in one frame
+ 
+ const startBtn = document.getElementById("startBtn") as HTMLButtonElement;
+ const statusEl = document.getElementById("status") as HTMLSpanElement;
+ const decksEl = document.getElementById("decks") as HTMLElement;
+ 
+ const config: AppConfig = loadConfig(localStorage);
+ const views: Map<string, DeckElements> = mountDecks(decksEl, config, {
+   onDelayChange,
+   onGainChange,
+   onDeviceChange,
+ });
+ 
+ // One capture per distinct device key (deviceId, or "" for the system default).
+ const handles = new Map<string, CaptureHandle>();
+ let runtimes: DeckRuntime[] = [];
+ let running = false;
+ let rafId = 0;
+ 
+-const scratchL = new Float32Array(MAX_COLUMNS * SAMPLES_PER_COLUMN);
++const scratchL = new Float32Array(MAX_COLUMNS * Math.max(...ZOOM_LEVELS));
+ const scratchR = new Float32Array(scratchL.length);
+ 
+ interface DeckRuntime {
+   deckId: string;
+   stream: DeckStreams;
+   canvas: HTMLCanvasElement;
+   sampleRate: number;
+   consumed: number | null;
+ }
+ 
+@@ -154,21 +154,21 @@ function statusSummary(): string {
+ }
+ 
+ function frame(): void {
+   for (const rt of runtimes) {
+     const deck = config.decks.find((d) => d.id === rt.deckId);
+     if (deck) {
+       rt.stream.delaySamples = Math.round((deck.delayMs / 1000) * rt.sampleRate);
+       rt.stream.gain = dbToLinear(deck.gainDb);
+     }
+     const cap = Math.min(rt.canvas.width, MAX_COLUMNS);
+-    rt.consumed = advanceDeck(rt.stream, rt.consumed, scratchL, scratchR, cap);
++    rt.consumed = advanceDeck(rt.stream, rt.consumed, scratchL, scratchR, cap, config.samplesPerColumn);
+   }
+   rafId = requestAnimationFrame(frame);
+ }
+ 
+ startBtn.addEventListener("click", () => {
+   if (running) void stopAll();
+   else void startAll();
+ });
+ 
+ void refreshDeviceLabels();
+diff --git a/src/render/scrollDriver.test.ts b/src/render/scrollDriver.test.ts
+index 1fe01ad..f87a7e0 100644
+--- a/src/render/scrollDriver.test.ts
++++ b/src/render/scrollDriver.test.ts
+@@ -71,11 +71,20 @@ describe("advanceDeck", () => {
+ 
+   it("caps columns at maxColumns and resnaps on large backlog", () => {
+     const { writer, stream } = makeStream(1 << 20);
+     let consumed = advanceDeck(stream, null, scratch, scratch, 8); // snap at 0
+     // Write far more than maxColumns*SAMPLES_PER_COLUMN of backlog.
+     writer.write(new Float32Array(100 * SAMPLES_PER_COLUMN));
+     consumed = advanceDeck(stream, consumed, scratch, scratch, 8);
+     // Backlog exceeded the window, so it resnaps to head rather than redraw all.
+     expect(consumed).toBe(100 * SAMPLES_PER_COLUMN);
+   });
++
++  it("paces columns by the given samplesPerColumn", () => {
++    const { writer, renderer, stream } = makeStream(48000);
++    let consumed = advanceDeck(stream, null, scratch, scratch, 32, 64); // snap at 0
++    writer.write(new Float32Array(3 * 64 + 5));
++    consumed = advanceDeck(stream, consumed, scratch, scratch, 32, 64);
++    expect(renderer.pushes[0]).toHaveLength(3);
++    expect(consumed).toBe(3 * 64);
++  });
+ });
+diff --git a/src/render/scrollDriver.ts b/src/render/scrollDriver.ts
+index fb3829b..e3137fa 100644
+--- a/src/render/scrollDriver.ts
++++ b/src/render/scrollDriver.ts
+@@ -18,35 +18,36 @@ const SAMPLES_PER_COLUMN = 256; // ~5.3ms/column @ 48kHz; zoom knob lives here (
+  * Advances one deck's scrolling waveform by however many whole columns of new
+  * audio have arrived since the last call. `consumedHead` is the absolute
+  * sample index (delay-adjusted) already drawn; returns the updated value.
+  */
+ export function advanceDeck(
+   stream: DeckStreams,
+   consumedHead: number | null,
+   scratchL: Float32Array,
+   scratchR: Float32Array,
+   maxColumns: number,
++  samplesPerColumn: number = SAMPLES_PER_COLUMN,
+ ): number {
+   const written = stream.left.totalWritten();
+   const head = written - stream.delaySamples;
+ 
+   // On first frame (or after a delay jump), start near the head so we don't
+   // try to redraw seconds of backlog at once.
+-  if (consumedHead === null || head - consumedHead > maxColumns * SAMPLES_PER_COLUMN) {
++  if (consumedHead === null || head - consumedHead > maxColumns * samplesPerColumn) {
+     return head;
+   }
+ 
+   const avail = head - consumedHead;
+-  const columns = Math.min(maxColumns, Math.floor(avail / SAMPLES_PER_COLUMN));
++  const columns = Math.min(maxColumns, Math.floor(avail / samplesPerColumn));
+   if (columns <= 0) return consumedHead;
+ 
+-  const blockLen = columns * SAMPLES_PER_COLUMN;
++  const blockLen = columns * samplesPerColumn;
+   const end = consumedHead + blockLen;
+   const delayForBlock = written - end;
+ 
+   const left = stream.left.readRecent(scratchL, blockLen, delayForBlock);
+   const right = stream.right ? stream.right.readRecent(scratchR, blockLen, delayForBlock) : null;
+   const mono = mixToMono(left.subarray(0, blockLen), right ? right.subarray(0, blockLen) : null, stream.mode, stream.gain);
+ 
+   stream.renderer.pushColumns(binWaveform(mono, columns));
+   return end;
+ }
