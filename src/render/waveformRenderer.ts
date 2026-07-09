@@ -2,6 +2,10 @@ import type { WaveformBin } from "../dsp/waveformBinner";
 
 const PEAK_ALPHA = 0.4; // translucent peak envelope behind the solid RMS body
 
+export interface RenderColumn extends WaveformBin {
+  color?: string; // RMS-body color; peak envelope always uses the deck color
+}
+
 function clampUnit(v: number): number {
   if (v > 1) return 1;
   if (v < -1) return -1;
@@ -43,7 +47,7 @@ export class WaveformRenderer {
   }
 
   /** Scroll left by `bins.length` px, then draw `bins` into the exposed strip. */
-  pushColumns(bins: WaveformBin[]): void {
+  pushColumns(bins: RenderColumn[]): void {
     const w = this.canvas.width;
     const h = this.canvas.height;
     const cols = bins.length;
@@ -59,21 +63,22 @@ export class WaveformRenderer {
 
     const x0 = Math.max(0, w - cols);
     const mid = h / 2;
-    ctx.fillStyle = this.color;
 
     for (let i = 0; i < cols; i++) {
       const bin = bins[i]!;
       const x = x0 + i;
       if (x >= w) break;
 
-      // Peak envelope (translucent).
+      // Peak envelope (translucent) — always deck color.
       const peakTop = mid - clampUnit(bin.max) * mid;
       const peakBottom = mid - clampUnit(bin.min) * mid;
+      ctx.fillStyle = this.color;
       ctx.globalAlpha = PEAK_ALPHA;
       ctx.fillRect(x, peakTop, 1, Math.max(1, peakBottom - peakTop));
 
-      // RMS body (solid) centred on the midline.
+      // RMS body (solid) — per-bin band color if available, otherwise deck color.
       const r = clampUnit(bin.rms);
+      ctx.fillStyle = bin.color ?? this.color;
       ctx.globalAlpha = 1;
       ctx.fillRect(x, mid - r * mid, 1, Math.max(1, 2 * r * mid));
     }

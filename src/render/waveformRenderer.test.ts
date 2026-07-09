@@ -23,7 +23,7 @@ class FakeCtx {
     this.ops.push(["clearRect", ...args]);
   }
   fillRect(...args: unknown[]): void {
-    this.ops.push(["fillRect", ...args]);
+    this.ops.push(["fillRect", ...args, this.fillStyle]);
   }
 }
 
@@ -122,5 +122,14 @@ describe("WaveformRenderer scroll", () => {
     const { canvas, renderer } = makeRenderer();
     renderer.pushColumns([]);
     expect(canvas.ctx.ops).toHaveLength(0);
+  });
+
+  it("uses the per-bin color for the RMS body and the deck color for the peak envelope", () => {
+    const { canvas, renderer } = makeRenderer();
+    renderer.pushColumns([{ min: -0.5, max: 0.5, rms: 0.3, color: "rgb(1,2,3)" }]);
+    const fills = canvas.ctx.ops.filter(([name]) => name === "fillRect");
+    // fills[0] is peak envelope (deck color), fills[1] is RMS body (band color)
+    expect(fills[0]![5]).toBe("#123456");     // peak envelope: deck color
+    expect(fills[1]![5]).toBe("rgb(1,2,3)");  // rms body: band color
   });
 });

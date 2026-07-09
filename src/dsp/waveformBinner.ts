@@ -45,3 +45,21 @@ function reduce(samples: Float32Array, start: number, end: number): WaveformBin 
   }
   return { min, max, rms: Math.sqrt(sumSq / (end - start)) };
 }
+
+/** Per-bin RMS using the same bin edges as binWaveform. Empty bins emit 0. */
+export function rmsBins(samples: Float32Array, binCount: number): number[] {
+  if (!Number.isInteger(binCount) || binCount <= 0) {
+    throw new Error(`binCount must be a positive integer, got ${binCount}`);
+  }
+  const out: number[] = new Array(binCount);
+  const n = samples.length;
+  for (let b = 0; b < binCount; b++) {
+    const start = Math.floor((b * n) / binCount);
+    const end = Math.floor(((b + 1) * n) / binCount);
+    if (end <= start) { out[b] = 0; continue; }
+    let sumSq = 0;
+    for (let i = start; i < end; i++) sumSq += samples[i]! * samples[i]!;
+    out[b] = Math.sqrt(sumSq / (end - start));
+  }
+  return out;
+}

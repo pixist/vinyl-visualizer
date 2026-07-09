@@ -5,6 +5,7 @@ import { startCapture, listInputDevices, type CaptureHandle } from "./audio/capt
 import { mountDecks, populateDeviceOptions, populateChannelOptions, type DeckElements } from "./render/deckView";
 import { WaveformRenderer } from "./render/waveformRenderer";
 import { advanceDeck, type DeckStreams } from "./render/scrollDriver";
+import { BandSplitter } from "./dsp/bandSplit";
 
 const MAX_COLUMNS = 2048; // upper bound on columns redrawn in one frame
 
@@ -174,6 +175,7 @@ function buildRuntimes(): void {
         renderer: new WaveformRenderer(canvas, deck.color),
         delaySamples: 0,
         gain: dbToLinear(deck.gainDb),
+        bands: new BandSplitter(handle.sampleRate),
       },
       canvas,
       sampleRate: handle.sampleRate,

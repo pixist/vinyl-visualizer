@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { binWaveform } from "./waveformBinner";
+import { binWaveform, rmsBins } from "./waveformBinner";
 
 describe("binWaveform", () => {
   it("rejects invalid bin counts", () => {
@@ -35,5 +35,15 @@ describe("binWaveform", () => {
     const bins = binWaveform(new Float32Array([0.5]), 4);
     expect(bins[0]).toEqual({ min: 0, max: 0, rms: 0 });
     expect(bins[3]!.max).toBe(0.5);
+  });
+});
+
+describe("rmsBins", () => {
+  it("computes per-bin rms", () => {
+    const samples = new Float32Array([1, 1, 0, 0]);
+    expect(rmsBins(samples, 2)).toEqual([1, 0]);
+  });
+  it("emits 0 for empty bins", () => {
+    expect(rmsBins(new Float32Array(0), 2)).toEqual([0, 0]);
   });
 });

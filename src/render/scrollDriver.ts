@@ -1,7 +1,9 @@
 import type { RingReader } from "../audio/ringBuffer";
-import { binWaveform } from "../dsp/waveformBinner";
+import { binWaveform, rmsBins } from "../dsp/waveformBinner";
 import { mixToMono, type ChannelMode } from "../util/channelMix";
-import { WaveformRenderer } from "./waveformRenderer";
+import { WaveformRenderer, type RenderColumn } from "./waveformRenderer";
+import { colorForBands } from "./bandColor";
+import type { BandSplitter } from "../dsp/bandSplit";
 
 export interface DeckStreams {
   left: RingReader;
@@ -10,6 +12,7 @@ export interface DeckStreams {
   renderer: WaveformRenderer;
   delaySamples: number;
   gain: number; // linear display gain applied before binning; 1 = unity
+  bands?: BandSplitter;
 }
 
 const SAMPLES_PER_COLUMN = 256; // ~5.3ms/column @ 48kHz; zoom knob lives here (M1)
@@ -48,7 +51,16 @@ export function advanceDeck(
   const right = stream.right ? stream.right.readRecent(scratchR, blockLen, delayForBlock) : null;
   const mono = mixToMono(left.subarray(0, blockLen), right ? right.subarray(0, blockLen) : null, stream.mode, stream.gain);
 
-  stream.renderer.pushColumns(binWaveform(mono, columns));
+  const bins: RenderColumn[] = binWaveform(mono, columns);
+  if (stream.bands) {
+    const { low, mid, high } = stream.bands.process(mono);
+    const l = rmsBins(low, columns), m = rmsBins(mid, columns), h = rmsBins(high, columns);
+    for (let i = 0; i < columns; i++) {
+      const c = colorForBands(l[i]!, m[i]!, h[i]!);
+      if (c) bins[i]!.color = c;
+    }
+  }
+  stream.renderer.pushColumns(bins);
   return end;
 }
 
