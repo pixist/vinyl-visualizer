@@ -39,3 +39,11 @@ body {
 .gain input[type="range"] { width: 120px; }
 .deck-canvas { display: block; width: 100%; height: 160px; background: #06080b; }
 .deck-mode, .deck-ch { margin-left: 8px; background: #12161d; color: #d7dde5; border: 1px solid #2c3340; border-radius: 6px; padding: 4px 6px; }
+.beat { display: flex; align-items: center; gap: 6px; margin-left: 12px; }
+.beat-bpm { min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+.beat-bar { display: inline-flex; gap: 3px; }
+.beat-block { width: 14px; height: 14px; border-radius: 3px; background: #232a35; }
+.beat-block-active { background: #4fd1ff; }
+.beat-low-confidence { opacity: 0.45; }
+.beat button { background: #1a2029; color: #d7dde5; border: 1px solid #2c3340; border-radius: 4px; padding: 1px 8px; cursor: pointer; }
+.beat button:hover { background: #29313d; }

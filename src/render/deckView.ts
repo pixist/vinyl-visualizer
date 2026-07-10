@@ -4,6 +4,7 @@ import type { ChannelMode } from "../util/channelMix";
 
 export interface DeckElements {
   root: HTMLElement;
+  head: HTMLElement;
   canvas: HTMLCanvasElement;
   deviceSelect: HTMLSelectElement;
   modeSelect: HTMLSelectElement;
@@ -142,7 +143,7 @@ export function createDeckView(deck: DeckConfig, callbacks: DeckCallbacks): Deck
   canvas.className = "deck-canvas";
 
   root.append(head, canvas);
-  return { root, canvas, deviceSelect, modeSelect, chSelectL, chSelectR };
+  return { root, head, canvas, deviceSelect, modeSelect, chSelectL, chSelectR };
 }
 
 export function mountDecks(
