@@ -63,6 +63,39 @@ describe("BeatEngine (aubio tempo)", () => {
     expect(engine.state().barPosition).toBe(3);
   });
 
+  it("auto-anchors beat 1 to the accented (loudest) beat of the bar", async () => {
+    const layout = createRingBuffer(FS * 40);
+    const writer = new RingWriter(layout);
+    const engine = new BeatEngine(new RingReader(layout), null, "mono-sum", FS);
+    await settle();
+
+    // 120 BPM kicks; every 4th kick (t = 0, 2, 4, ... s) is 3x louder.
+    const samples: number[] = [];
+    const chunk = new Float32Array(FS / 10);
+    for (let c = 0; c < 250; c++) {
+      const t0 = c * chunk.length;
+      for (let i = 0; i < chunk.length; i++) {
+        const t = (t0 + i) / FS;
+        const sinceKick = t % 0.5;
+        const kickIndex = Math.floor(t / 0.5);
+        const amp = kickIndex % 4 === 0 ? 1.0 : 0.3;
+        chunk[i] = sinceKick < 0.12
+          ? amp * Math.sin(2 * Math.PI * 60 * sinceKick) * Math.exp(-sinceKick * 30)
+          : 0;
+      }
+      writer.write(chunk);
+      engine.advance();
+      // Sample bar position 100 ms after each late accent (t = 20, 22, 24 s).
+      const t = (c + 1) * 0.1;
+      if (t > 20 && Math.abs((t - 0.1) % 2) < 1e-9) {
+        samples.push(engine.state().barPosition);
+      }
+    }
+
+    expect(samples.length).toBeGreaterThan(0);
+    for (const p of samples) expect(p).toBe(0);
+  });
+
   it("reports null bpm for silence", async () => {
     const layout = createRingBuffer(FS * 10);
     const writer = new RingWriter(layout);
