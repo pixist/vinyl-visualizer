@@ -6,6 +6,8 @@ import { mountDecks, populateDeviceOptions, populateChannelOptions, type DeckEle
 import { WaveformRenderer } from "./render/waveformRenderer";
 import { advanceDeck, type DeckStreams } from "./render/scrollDriver";
 import { BandSplitter } from "./dsp/bandSplit";
+import { BeatEngine } from "./audio/beatEngine";
+import { createBeatView, updateBeatView, type BeatViewElements } from "./render/beatView";
 
 const MAX_COLUMNS = 2048; // upper bound on columns redrawn in one frame
 
@@ -54,6 +56,8 @@ interface DeckRuntime {
   canvas: HTMLCanvasElement;
   sampleRate: number;
   consumed: number | null;
+  beatEngine: BeatEngine;
+  beatView: BeatViewElements;
 }
 
 function setStatus(msg: string): void {
@@ -144,7 +148,10 @@ async function stopAll(): Promise<void> {
   runtimes = [];
   for (const handle of handles.values()) await handle.stop();
   handles.clear();
-  for (const view of views.values()) view.canvas.getContext("2d")?.clearRect(0, 0, view.canvas.width, view.canvas.height);
+  for (const view of views.values()) {
+    view.canvas.getContext("2d")?.clearRect(0, 0, view.canvas.width, view.canvas.height);
+    view.head.querySelector(".beat")?.remove();
+  }
   startBtn.textContent = "Start capture";
 }
 
@@ -170,6 +177,15 @@ function buildRuntimes(): void {
     canvas.width = canvas.clientWidth || 1200;
     canvas.height = canvas.clientHeight || 160;
 
+    // Beat tracking
+    view.head.querySelector(".beat")?.remove();
+    const beatEngine = new BeatEngine(leftReader, rightReader, deck.mode, handle.sampleRate);
+    const beatView = createBeatView({
+      onTap: () => beatEngine.tap1(),
+      onNudge: (d) => beatEngine.nudge(d),
+    });
+    view.head.append(beatView.root);
+
     runtimes.push({
       deckId: deck.id,
       stream: {
@@ -184,6 +200,8 @@ function buildRuntimes(): void {
       canvas,
       sampleRate: handle.sampleRate,
       consumed: null,
+      beatEngine,
+      beatView,
     });
   }
 }
@@ -205,6 +223,8 @@ function frame(): void {
     }
     const cap = Math.min(rt.canvas.width, MAX_COLUMNS);
     rt.consumed = advanceDeck(rt.stream, rt.consumed, scratchL, scratchR, cap, config.samplesPerColumn);
+    rt.beatEngine.advance();
+    updateBeatView(rt.beatView, rt.beatEngine.state());
   }
   rafId = requestAnimationFrame(frame);
 }
