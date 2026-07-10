@@ -1,30 +1,41 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { createRingBuffer, RingWriter, RingReader } from "./ringBuffer";
 import { BeatEngine } from "./beatEngine";
 
 const FS = 48000;
 
-describe("BeatEngine", () => {
-  it("detects the tempo of a synthetic 120 BPM kick pattern end-to-end", () => {
+beforeAll(() => BeatEngine.ready());
+
+/** Wait a tick so the engine's own aubio-ready continuation has run. */
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+function writeKickPattern(writer: RingWriter, engine: BeatEngine, onStep?: () => void): void {
+  // 25 seconds of a decaying 60 Hz "kick" every 0.5 s (120 BPM), written in
+  // 100 ms chunks with advance() interleaved (as the frame loop would).
+  const chunk = new Float32Array(FS / 10);
+  for (let c = 0; c < 250; c++) {
+    const t0 = c * chunk.length;
+    for (let i = 0; i < chunk.length; i++) {
+      const t = (t0 + i) / FS;
+      const sinceKick = t % 0.5;
+      chunk[i] = sinceKick < 0.12
+        ? Math.sin(2 * Math.PI * 60 * sinceKick) * Math.exp(-sinceKick * 30)
+        : 0;
+    }
+    writer.write(chunk);
+    engine.advance();
+    onStep?.();
+  }
+}
+
+describe("BeatEngine (aubio tempo)", () => {
+  it("detects the tempo of a synthetic 120 BPM kick pattern end-to-end", async () => {
     const layout = createRingBuffer(FS * 40);
     const writer = new RingWriter(layout);
     const engine = new BeatEngine(new RingReader(layout), null, "mono-sum", FS);
+    await settle();
 
-    // 25 seconds of a decaying 60 Hz "kick" every 0.5 s, written in 100 ms
-    // chunks with advance() interleaved (as the frame loop would).
-    const chunk = new Float32Array(FS / 10);
-    for (let c = 0; c < 250; c++) {
-      const t0 = c * chunk.length;
-      for (let i = 0; i < chunk.length; i++) {
-        const t = (t0 + i) / FS;
-        const sinceKick = t % 0.5;
-        chunk[i] = sinceKick < 0.12
-          ? Math.sin(2 * Math.PI * 60 * sinceKick) * Math.exp(-sinceKick * 30)
-          : 0;
-      }
-      writer.write(chunk);
-      engine.advance();
-    }
+    writeKickPattern(writer, engine);
 
     const s = engine.state();
     expect(s.bpm).not.toBeNull();
@@ -32,11 +43,34 @@ describe("BeatEngine", () => {
     expect(s.bpm!).toBeLessThan(122);
   });
 
-  it("reports null bpm for silence", () => {
+  it("cycles barPosition through integer beats 0..3 and honors tap1/nudge", async () => {
+    const layout = createRingBuffer(FS * 40);
+    const writer = new RingWriter(layout);
+    const engine = new BeatEngine(new RingReader(layout), null, "mono-sum", FS);
+    await settle();
+
+    const positions = new Set<number>();
+    writeKickPattern(writer, engine, () => positions.add(engine.state().barPosition));
+
+    expect([...positions].sort()).toEqual([0, 1, 2, 3]);
+    for (const p of positions) expect(Number.isInteger(p)).toBe(true);
+
+    engine.tap1();
+    expect(engine.state().barPosition).toBe(0);
+    engine.nudge(1);
+    expect(engine.state().barPosition).toBe(1);
+    engine.nudge(-2);
+    expect(engine.state().barPosition).toBe(3);
+  });
+
+  it("reports null bpm for silence", async () => {
     const layout = createRingBuffer(FS * 10);
     const writer = new RingWriter(layout);
     const engine = new BeatEngine(new RingReader(layout), null, "mono-sum", FS);
+    await settle();
     writer.write(new Float32Array(FS * 5));
+    engine.advance();
+    writer.write(new Float32Array(FS / 2));
     engine.advance();
     expect(engine.state().bpm).toBeNull();
   });

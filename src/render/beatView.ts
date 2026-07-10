@@ -12,7 +12,7 @@ export interface BeatViewCallbacks {
 }
 
 const BLOCK_COUNT = 4;
-const CONFIDENT = 0.4; // below this the indicator dims
+const CONFIDENT = 0.1; // aubio tempo confidence below this dims the indicator
 
 export function createBeatView(callbacks: BeatViewCallbacks): BeatViewElements {
   const root = document.createElement("div");
@@ -59,6 +59,9 @@ export function updateBeatView(
   if (els.bpmText.textContent !== bpmLabel) els.bpmText.textContent = bpmLabel;
   els.root.classList.toggle("beat-low-confidence", state.confidence < CONFIDENT);
   els.blocks.forEach((block, i) => {
-    block.classList.toggle("beat-block-active", i === state.barPosition && state.bpm !== null);
+    block.classList.toggle(
+      "beat-block-active",
+      i === Math.floor(state.barPosition) && state.bpm !== null,
+    );
   });
 }

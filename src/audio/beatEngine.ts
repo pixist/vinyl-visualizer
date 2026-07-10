@@ -1,56 +1,69 @@
+import aubio, { type Tempo } from "aubiojs";
 import { RingReader } from "./ringBuffer";
 import { mixToMono, type ChannelMode } from "../util/channelMix";
-import { OnsetDetector } from "../dsp/onsetDetector";
-import { estimateBpm, type TempoEstimate } from "../dsp/tempoEstimator";
-import { BeatTracker } from "../dsp/beatTracker";
 
 /**
- * Per-deck beat analysis: consumes the deck's ring buffers at a fixed hop,
- * independent of the waveform path, and feeds onset flux into the tempo
- * estimator (drift anchor) and PLL beat tracker. Call advance() every frame.
+ * Per-deck beat analysis backed by aubio's battle-tested tempo tracker
+ * (WASM build of the aubio C library). Consumes the deck's ring buffers at a
+ * fixed hop, independent of the waveform path, and feeds each hop to
+ * aubio Tempo, which emits a tick on every detected beat. Beats are counted
+ * into 4-beat bars; tap-1 / nudge shift which beat is the downbeat.
+ *
+ * The WASM module loads asynchronously; advance() is a no-op (it just keeps
+ * the read cursor snapped to the ring head) until it is ready.
  */
 
-const HOP = 256;
-const FLUX_WINDOW_S = 10;   // rolling window handed to estimateBpm
-const ESTIMATE_EVERY = 64;  // hops between tempo re-estimates (~0.34 s)
+const FRAME = 1024;         // aubio FFT window
+const HOP = 256;            // analysis hop, one Tempo.do() call per hop
 const MAX_BACKLOG_S = 1;    // resnap if more than this is pending
+const BEATS_PER_BAR = 4;
+
+// Module-level singleton: the WASM module is loaded once and shared by decks.
+const aubioModule = aubio();
 
 export interface BeatState {
   bpm: number | null;
-  barPosition: number;
+  barPosition: number; // integer beat index within the bar, 0..3
   confidence: number;
 }
 
 export class BeatEngine {
-  private readonly detector = new OnsetDetector(1024, HOP);
-  private readonly tracker: BeatTracker;
-  private readonly flux: number[] = [];
-  private readonly maxFlux: number;
-  private readonly hopSeconds: number;
+  private tempo: Tempo | null = null;
+  private readonly hopScratch = new Float32Array(HOP);
   private readonly scratchL: Float32Array;
   private readonly scratchR: Float32Array;
   private consumed: number | null = null;
-  private hopsSinceEstimate = 0;
-  private lastEstimate: TempoEstimate | null = null;
+  private beatCount = 0;
+  private barOffset = 0;
+  private lastBpm: number | null = null;
+  private lastConfidence = 0;
 
   constructor(
     private readonly left: RingReader,
     private readonly right: RingReader | null,
     private readonly mode: ChannelMode,
-    private readonly sampleRate: number,
+    sampleRate: number,
   ) {
-    this.hopSeconds = HOP / sampleRate;
-    this.maxFlux = Math.ceil(FLUX_WINDOW_S / this.hopSeconds);
-    this.tracker = new BeatTracker(this.hopSeconds);
     const maxSamples = Math.ceil(sampleRate * MAX_BACKLOG_S);
     this.scratchL = new Float32Array(maxSamples);
     this.scratchR = new Float32Array(maxSamples);
+    this.maxBacklog = maxSamples;
+    void aubioModule.then(({ Tempo }) => {
+      this.tempo = new Tempo(FRAME, HOP, sampleRate);
+    });
+  }
+
+  private readonly maxBacklog: number;
+
+  /** Resolves when the shared aubio WASM module has loaded (for tests). */
+  static ready(): Promise<void> {
+    return aubioModule.then(() => undefined);
   }
 
   /** Consume all complete new hops written since the last call. */
   advance(): void {
     const written = this.left.totalWritten();
-    if (this.consumed === null || written - this.consumed > this.sampleRate * MAX_BACKLOG_S) {
+    if (this.consumed === null || written - this.consumed > this.maxBacklog || !this.tempo) {
       this.consumed = written - (written % HOP);
       return;
     }
@@ -67,33 +80,34 @@ export class BeatEngine {
       : null;
     const mono = mixToMono(left, right, this.mode);
 
-    for (const fluxValue of this.detector.feed(mono)) {
-      this.flux.push(fluxValue);
-      if (this.flux.length > this.maxFlux) this.flux.shift();
-      this.hopsSinceEstimate++;
-      if (this.hopsSinceEstimate >= ESTIMATE_EVERY) {
-        this.hopsSinceEstimate = 0;
-        this.lastEstimate = estimateBpm(this.flux, this.hopSeconds);
+    for (let h = 0; h < hops; h++) {
+      this.hopScratch.set(mono.subarray(h * HOP, (h + 1) * HOP));
+      const isBeat = this.tempo.do(this.hopScratch) !== 0;
+      if (isBeat) {
+        this.beatCount++;
+        this.lastBpm = this.tempo.getBpm();
+        this.lastConfidence = this.tempo.getConfidence();
       }
-      this.tracker.update(fluxValue, this.lastEstimate);
-      this.lastEstimate = null; // hand each estimate to the tracker once
     }
     this.consumed = end;
   }
 
   state(): BeatState {
+    const mod = (n: number, m: number): number => ((n % m) + m) % m;
     return {
-      bpm: this.tracker.bpm,
-      barPosition: this.tracker.barPosition(),
-      confidence: this.tracker.confidence,
+      bpm: this.lastBpm,
+      barPosition: mod(this.beatCount + this.barOffset, BEATS_PER_BAR),
+      confidence: this.lastConfidence,
     };
   }
 
+  /** Mark the most recent beat as beat 1 of the bar. */
   tap1(): void {
-    this.tracker.tap1();
+    this.barOffset = -this.beatCount;
   }
 
+  /** Shift the downbeat by whole beats. */
   nudge(delta: number): void {
-    this.tracker.nudge(delta);
+    this.barOffset += delta;
   }
 }
