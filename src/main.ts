@@ -34,6 +34,7 @@ zoomSelect.addEventListener("change", () => {
   saveConfig(localStorage, config);
   for (const rt of runtimes) {
     rt.consumed = null; // resnap so we don't redraw a huge backlog at the new scale
+    // BandSplitter state survives the resnap; its filters settle in <1ms so the transient is invisible.
     rt.stream.renderer.clear();
   }
 });
@@ -100,6 +101,7 @@ function onRoutingChange(
   if (patch.leftChannel !== undefined) deck.leftChannel = patch.leftChannel;
   if (patch.rightChannel !== undefined) deck.rightChannel = patch.rightChannel;
   saveConfig(localStorage, config);
+  // TODO(M2): restart is only needed when channel demand grows; mode/channel swaps could rebuild runtimes in place.
   if (running) void restart(); // channel demand may have changed
 }
 
@@ -158,9 +160,11 @@ function buildRuntimes(): void {
     const view = views.get(deck.id);
     const handle = handles.get(deviceKey(deck));
     if (!view || !handle) continue;
-    const leftReader = handle.readers[deck.leftChannel];
+    const leftIdx = Math.min(deck.leftChannel, handle.channelCount - 1);
+    const leftReader = handle.readers[leftIdx];
     if (!leftReader) continue;
-    const rightReader = deck.rightChannel !== null ? handle.readers[deck.rightChannel] ?? null : null;
+    const rightReader =
+      deck.rightChannel !== null ? handle.readers[Math.min(deck.rightChannel, handle.channelCount - 1)] ?? null : null;
 
     const canvas = view.canvas;
     canvas.width = canvas.clientWidth || 1200;

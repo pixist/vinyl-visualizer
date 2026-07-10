@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { createRingBuffer, RingWriter, RingReader } from "../audio/ringBuffer";
 import { advanceDeck, SAMPLES_PER_COLUMN, type DeckStreams } from "./scrollDriver";
 import type { WaveformBin } from "../dsp/waveformBinner";
-import type { WaveformRenderer } from "./waveformRenderer";
+import type { WaveformRenderer, RenderColumn } from "./waveformRenderer";
+import { BandSplitter } from "../dsp/bandSplit";
 
 /** Records the columns pushed so we can assert on the paced-advance logic. */
 class FakeRenderer {
@@ -86,5 +87,33 @@ describe("advanceDeck", () => {
     consumed = advanceDeck(stream, consumed, scratch, scratch, 32, 64);
     expect(renderer.pushes[0]).toHaveLength(3);
     expect(consumed).toBe(3 * 64);
+  });
+
+  it("colors pushed columns by dominant band when stream.bands is set", () => {
+    const { writer, renderer, stream } = makeStream(48000);
+    stream.bands = new BandSplitter(48000);
+    let consumed = advanceDeck(stream, null, scratch, scratch, 32); // snap at 0
+    const lowFreqSignal = new Float32Array(SAMPLES_PER_COLUMN);
+    for (let i = 0; i < SAMPLES_PER_COLUMN; i++) {
+      lowFreqSignal[i] = Math.sin((2 * Math.PI * 50 * i) / 48000);
+    }
+    writer.write(lowFreqSignal);
+    consumed = advanceDeck(stream, consumed, scratch, scratch, 32);
+    expect(renderer.pushes).toHaveLength(1);
+    const bin = renderer.pushes[0]![0] as RenderColumn;
+    expect(bin.color).toBeDefined();
+    expect(bin.color).toMatch(/^rgb\(/);
+    const [r, , b] = bin.color!.match(/\d+/g)!.map(Number) as [number, number, number];
+    expect(r).toBeGreaterThan(b);
+  });
+
+  it("leaves pushed columns uncolored when stream.bands is not set", () => {
+    const { writer, renderer, stream } = makeStream(48000);
+    let consumed = advanceDeck(stream, null, scratch, scratch, 32); // snap at 0
+    writer.write(new Float32Array(SAMPLES_PER_COLUMN));
+    consumed = advanceDeck(stream, consumed, scratch, scratch, 32);
+    expect(renderer.pushes).toHaveLength(1);
+    const bin = renderer.pushes[0]![0] as RenderColumn;
+    expect(bin.color).toBeUndefined();
   });
 });

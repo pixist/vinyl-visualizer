@@ -44,7 +44,8 @@ function fillChannelOptions(
     opt.textContent = `ch ${i + 1}`;
     select.append(opt);
   }
-  select.value = selected === null ? "" : String(selected);
+  const sel = selected === null ? "" : String(Math.min(selected, count - 1));
+  select.value = sel;
 }
 
 /** Builds the DOM for one deck lane: device picker, delay slider, and canvas. */
