@@ -1,161 +1,203 @@
-### Task 6: Band colors on the waveform body
+### Task 6: BeatEngine + main-loop wiring
 
 **Files:**
-- Create: `src/render/bandColor.ts`
-- Modify: `src/dsp/waveformBinner.ts`, `src/render/scrollDriver.ts`, `src/render/waveformRenderer.ts`, `src/main.ts`
-- Test: `src/render/bandColor.test.ts`, `src/dsp/waveformBinner.test.ts`, `src/render/waveformRenderer.test.ts`
+- Create: `src/audio/beatEngine.ts`
+- Modify: `src/main.ts`
+- Test: `src/audio/beatEngine.test.ts`
 
 **Interfaces:**
-- Consumes: `BandSplitter` (Task 5).
+- Consumes: `RingReader` (src/audio/ringBuffer.ts), `mixToMono`/`ChannelMode` (src/util/channelMix.ts), `OnsetDetector` (Task 2), `estimateBpm` (Task 3), `BeatTracker` (Task 4), `createBeatView`/`updateBeatView` (Task 5), `DeckElements.head` (Task 5).
 - Produces:
-  - `export function rmsBins(samples: Float32Array, binCount: number): number[]` in waveformBinner.
-  - `export function colorForBands(low: number, mid: number, high: number): string | null` in bandColor (null when all zero).
-  - `WaveformRenderer.pushColumns(bins: RenderColumn[])` where `export interface RenderColumn extends WaveformBin { color?: string }` (in waveformRenderer). RMS body uses `bin.color ?? deckColor`; peak envelope always deckColor.
-  - `DeckStreams.bands?: BandSplitter` (optional; undefined = no coloring).
 
-- [ ] **Step 1: Write the failing tests.**
+```ts
+export class BeatEngine {
+  constructor(left: RingReader, right: RingReader | null, mode: ChannelMode, sampleRate: number);
+  advance(): void; // consume all complete new hops since the last call
+  state(): { bpm: number | null; barPosition: number; confidence: number };
+  tap1(): void;
+  nudge(delta: number): void;
+}
+```
 
-`src/render/bandColor.test.ts`:
+- [ ] **Step 1: Write the failing test** — `src/audio/beatEngine.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { colorForBands, BAND_COLORS } from "./bandColor";
+import { createRingBuffer, RingWriter, RingReader } from "./ringBuffer";
+import { BeatEngine } from "./beatEngine";
 
-describe("colorForBands", () => {
-  it("returns the pure band color for a single-band signal", () => {
-    expect(colorForBands(1, 0, 0)).toBe(`rgb(${BAND_COLORS.low.join(",")})`);
-    expect(colorForBands(0, 0, 1)).toBe(`rgb(${BAND_COLORS.high.join(",")})`);
+const FS = 48000;
+
+describe("BeatEngine", () => {
+  it("detects the tempo of a synthetic 120 BPM kick pattern end-to-end", () => {
+    const layout = createRingBuffer(FS * 40);
+    const writer = new RingWriter(layout);
+    const engine = new BeatEngine(new RingReader(layout), null, "mono-sum", FS);
+
+    // 25 seconds of a decaying 60 Hz "kick" every 0.5 s, written in 100 ms
+    // chunks with advance() interleaved (as the frame loop would).
+    const chunk = new Float32Array(FS / 10);
+    for (let c = 0; c < 250; c++) {
+      const t0 = c * chunk.length;
+      for (let i = 0; i < chunk.length; i++) {
+        const t = (t0 + i) / FS;
+        const sinceKick = t % 0.5;
+        chunk[i] = sinceKick < 0.12
+          ? Math.sin(2 * Math.PI * 60 * sinceKick) * Math.exp(-sinceKick * 30)
+          : 0;
+      }
+      writer.write(chunk);
+      engine.advance();
+    }
+
+    const s = engine.state();
+    expect(s.bpm).not.toBeNull();
+    expect(s.bpm!).toBeGreaterThan(118);
+    expect(s.bpm!).toBeLessThan(122);
   });
-  it("blends proportionally to band energy", () => {
-    const mixed = colorForBands(1, 1, 0)!;
-    const [r, g, b] = mixed.match(/\d+/g)!.map(Number);
-    expect(r).toBe(Math.round((BAND_COLORS.low[0] + BAND_COLORS.mid[0]) / 2));
-    expect(g).toBe(Math.round((BAND_COLORS.low[1] + BAND_COLORS.mid[1]) / 2));
-    expect(b).toBe(Math.round((BAND_COLORS.low[2] + BAND_COLORS.mid[2]) / 2));
-  });
-  it("returns null for silence", () => {
-    expect(colorForBands(0, 0, 0)).toBeNull();
+
+  it("reports null bpm for silence", () => {
+    const layout = createRingBuffer(FS * 10);
+    const writer = new RingWriter(layout);
+    const engine = new BeatEngine(new RingReader(layout), null, "mono-sum", FS);
+    writer.write(new Float32Array(FS * 5));
+    engine.advance();
+    expect(engine.state().bpm).toBeNull();
   });
 });
 ```
 
-Append to `src/dsp/waveformBinner.test.ts`:
+- [ ] **Step 2: Run** `npx vitest run src/audio/beatEngine.test.ts` — expect FAIL.
+
+- [ ] **Step 3: Implement** `src/audio/beatEngine.ts`:
 
 ```ts
-import { rmsBins } from "./waveformBinner";
-
-describe("rmsBins", () => {
-  it("computes per-bin rms", () => {
-    const samples = new Float32Array([1, 1, 0, 0]);
-    expect(rmsBins(samples, 2)).toEqual([1, 0]);
-  });
-  it("emits 0 for empty bins", () => {
-    expect(rmsBins(new Float32Array(0), 2)).toEqual([0, 0]);
-  });
-});
-```
-
-Append to `src/render/waveformRenderer.test.ts` (uses existing fakes; `bin()` helper gains an optional color):
-
-```ts
-it("uses the per-bin color for the RMS body and the deck color for the peak envelope", () => {
-  const { canvas, renderer } = makeRenderer();
-  renderer.pushColumns([{ min: -0.5, max: 0.5, rms: 0.3, color: "rgb(1,2,3)" }]);
-  const fillStyles: string[] = [];
-  // FakeCtx records fillStyle at each fillRect — extend FakeCtx.fillRect to push
-  // ["fillRect", x, y, w, h, this.fillStyle] and assert:
-  const fills = canvas.ctx.ops.filter(([name]) => name === "fillRect");
-  expect(fills[0]![5]).toBe("#123456");     // peak envelope: deck color
-  expect(fills[1]![5]).toBe("rgb(1,2,3)");  // rms body: band color
-});
-```
-
-(Extend `FakeCtx.fillRect` in the test file to record `this.fillStyle` as shown.)
-
-- [ ] **Step 2: Run** `npm test` — expect FAIL.
-
-- [ ] **Step 3: Implement.**
-
-`src/render/bandColor.ts`:
-
-```ts
-/** Serato-style band palette: low = red, mid = green, high = blue. */
-export const BAND_COLORS = {
-  low: [235, 70, 70],
-  mid: [80, 200, 120],
-  high: [90, 140, 255],
-} as const;
+import { RingReader } from "./ringBuffer";
+import { mixToMono, type ChannelMode } from "../util/channelMix";
+import { OnsetDetector } from "../dsp/onsetDetector";
+import { estimateBpm, type TempoEstimate } from "../dsp/tempoEstimator";
+import { BeatTracker } from "../dsp/beatTracker";
 
 /**
- * Blend the band palette weighted by per-band RMS. Returns a CSS rgb() string,
- * or null for silence (caller falls back to the deck color).
+ * Per-deck beat analysis: consumes the deck's ring buffers at a fixed hop,
+ * independent of the waveform path, and feeds onset flux into the tempo
+ * estimator (drift anchor) and PLL beat tracker. Call advance() every frame.
  */
-export function colorForBands(low: number, mid: number, high: number): string | null {
-  const total = low + mid + high;
-  if (total <= 0) return null;
-  const ch = (i: 0 | 1 | 2) =>
-    Math.round((low * BAND_COLORS.low[i] + mid * BAND_COLORS.mid[i] + high * BAND_COLORS.high[i]) / total);
-  return `rgb(${ch(0)},${ch(1)},${ch(2)})`;
+
+const HOP = 256;
+const FLUX_WINDOW_S = 10;   // rolling window handed to estimateBpm
+const ESTIMATE_EVERY = 64;  // hops between tempo re-estimates (~0.34 s)
+const MAX_BACKLOG_S = 1;    // resnap if more than this is pending
+
+export interface BeatState {
+  bpm: number | null;
+  barPosition: number;
+  confidence: number;
+}
+
+export class BeatEngine {
+  private readonly detector = new OnsetDetector(1024, HOP);
+  private readonly tracker: BeatTracker;
+  private readonly flux: number[] = [];
+  private readonly maxFlux: number;
+  private readonly hopSeconds: number;
+  private readonly scratchL: Float32Array;
+  private readonly scratchR: Float32Array;
+  private consumed: number | null = null;
+  private hopsSinceEstimate = 0;
+  private lastEstimate: TempoEstimate | null = null;
+
+  constructor(
+    private readonly left: RingReader,
+    private readonly right: RingReader | null,
+    private readonly mode: ChannelMode,
+    private readonly sampleRate: number,
+  ) {
+    this.hopSeconds = HOP / sampleRate;
+    this.maxFlux = Math.ceil(FLUX_WINDOW_S / this.hopSeconds);
+    this.tracker = new BeatTracker(this.hopSeconds);
+    const maxSamples = Math.ceil(sampleRate * MAX_BACKLOG_S);
+    this.scratchL = new Float32Array(maxSamples);
+    this.scratchR = new Float32Array(maxSamples);
+  }
+
+  /** Consume all complete new hops written since the last call. */
+  advance(): void {
+    const written = this.left.totalWritten();
+    if (this.consumed === null || written - this.consumed > this.sampleRate * MAX_BACKLOG_S) {
+      this.consumed = written - (written % HOP);
+      return;
+    }
+    const avail = written - this.consumed;
+    const hops = Math.floor(avail / HOP);
+    if (hops <= 0) return;
+
+    const count = hops * HOP;
+    const end = this.consumed + count;
+    const delay = written - end;
+    const left = this.left.readRecent(this.scratchL, count, delay).subarray(0, count);
+    const right = this.right
+      ? this.right.readRecent(this.scratchR, count, delay).subarray(0, count)
+      : null;
+    const mono = mixToMono(left, right, this.mode);
+
+    for (const fluxValue of this.detector.feed(mono)) {
+      this.flux.push(fluxValue);
+      if (this.flux.length > this.maxFlux) this.flux.shift();
+      this.hopsSinceEstimate++;
+      if (this.hopsSinceEstimate >= ESTIMATE_EVERY) {
+        this.hopsSinceEstimate = 0;
+        this.lastEstimate = estimateBpm(this.flux, this.hopSeconds);
+      }
+      this.tracker.update(fluxValue, this.lastEstimate);
+      this.lastEstimate = null; // hand each estimate to the tracker once
+    }
+    this.consumed = end;
+  }
+
+  state(): BeatState {
+    return {
+      bpm: this.tracker.bpm,
+      barPosition: this.tracker.barPosition(),
+      confidence: this.tracker.confidence,
+    };
+  }
+
+  tap1(): void {
+    this.tracker.tap1();
+  }
+
+  nudge(delta: number): void {
+    this.tracker.nudge(delta);
+  }
 }
 ```
 
-`src/dsp/waveformBinner.ts` — add:
+- [ ] **Step 4: Wire into `src/main.ts`:**
+  - `DeckRuntime` gains `beatEngine: BeatEngine` and `beatView: BeatViewElements`.
+  - In `buildRuntimes()`, after creating the stream, create the engine and view and mount the view:
 
 ```ts
-/** Per-bin RMS using the same bin edges as binWaveform. Empty bins emit 0. */
-export function rmsBins(samples: Float32Array, binCount: number): number[] {
-  if (!Number.isInteger(binCount) || binCount <= 0) {
-    throw new Error(`binCount must be a positive integer, got ${binCount}`);
-  }
-  const out: number[] = new Array(binCount);
-  const n = samples.length;
-  for (let b = 0; b < binCount; b++) {
-    const start = Math.floor((b * n) / binCount);
-    const end = Math.floor(((b + 1) * n) / binCount);
-    if (end <= start) { out[b] = 0; continue; }
-    let sumSq = 0;
-    for (let i = start; i < end; i++) sumSq += samples[i]! * samples[i]!;
-    out[b] = Math.sqrt(sumSq / (end - start));
-  }
-  return out;
-}
+const beatEngine = new BeatEngine(leftReader, rightReader, deck.mode, handle.sampleRate);
+const beatView = createBeatView({
+  onTap: () => beatEngine.tap1(),
+  onNudge: (d) => beatEngine.nudge(d),
+});
+view.head.append(beatView.root);
 ```
 
-`src/render/waveformRenderer.ts` — add and use:
+  (Remove any previously mounted `.beat` element from `view.head` first: `view.head.querySelector(".beat")?.remove();` — restarts rebuild runtimes.)
+  - In `frame()`, after `advanceDeck`: `rt.beatEngine.advance(); updateBeatView(rt.beatView, rt.beatEngine.state());`
+  - In `stopAll()`, also remove beat views: `for (const view of views.values()) view.head.querySelector(".beat")?.remove();`
 
-```ts
-export interface RenderColumn extends WaveformBin {
-  color?: string; // RMS-body color; peak envelope always uses the deck color
-}
-```
-
-`pushColumns(bins: RenderColumn[])`; in the column loop set `ctx.fillStyle = this.color` before the peak fillRect and `ctx.fillStyle = bin.color ?? this.color` before the RMS fillRect (move the existing single `fillStyle` assignment into the loop).
-
-`src/render/scrollDriver.ts` — `DeckStreams` gains `bands?: BandSplitter` (import from `../dsp/bandSplit`). After computing `mono`:
-
-```ts
-const bins: RenderColumn[] = binWaveform(mono, columns);
-if (stream.bands) {
-  const { low, mid, high } = stream.bands.process(mono);
-  const l = rmsBins(low, columns), m = rmsBins(mid, columns), h = rmsBins(high, columns);
-  for (let i = 0; i < columns; i++) {
-    const c = colorForBands(l[i]!, m[i]!, h[i]!);
-    if (c) bins[i]!.color = c;
-  }
-}
-stream.renderer.pushColumns(bins);
-```
-
-`src/main.ts` — in `buildRuntimes()`, add `bands: new BandSplitter(handle.sampleRate)` to the stream object (import from `./dsp/bandSplit`).
-
-- [ ] **Step 4: Run** `npm test` and `npx tsc --noEmit` — all pass. Load http://localhost:5173: bass-heavy passages render red-ish, hi-hats blue-ish.
-- [ ] **Step 5: Commit** `feat: 3-band frequency coloring of waveform body`
+- [ ] **Step 5: Run** `npm test` and `npx tsc --noEmit` — all pass. The BeatEngine test is the slowest in the suite (~1s); that's acceptable.
+- [ ] **Step 6: Commit** `feat: per-deck beat engine wired to bar indicator UI`
 
 ---
 
 ## Self-Review Notes
 
-- Spec coverage: routing UI (Task 4), zoom (Tasks 1–3), 3-band coloring (Tasks 5–6). ✔
-- `advanceDeck` default param keeps M0 tests valid until Task 2 updates call sites. ✔
-- Type names consistent: `RenderColumn`, `BandSplitter`, `rmsBins`, `colorForBands`, `onRoutingChange`. ✔
-- `stereo` mode still displays as mono sum (true stereo lanes deferred — YAGNI until asked). ✔
+- Spec coverage: spectral-flux onsets (T2), autocorrelation tempo + drift anchor (T3), PLL tracker with drift tracking (T4), 4-block bar indicator + tap-1/nudge (T5, T6). ✔
+- Type consistency: `TempoEstimate` defined in T3, consumed in T4/T6; `BeatState` in T6; `DeckElements.head` added in T5, used in T6. ✔
+- The M1 `onRoutingChange` TODO (restart on mode change) is unaffected: BeatEngine is rebuilt on restart like the waveform runtimes. ✔
+- Tuning latitude for T4 gains is stated in Global Constraints. ✔

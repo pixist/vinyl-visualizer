@@ -1,136 +1,117 @@
-### Task 5: 3-band splitter (DSP)
+### Task 5: Beat view UI (BPM readout, 4-block bar, controls)
 
 **Files:**
-- Create: `src/dsp/bandSplit.ts`
-- Test: `src/dsp/bandSplit.test.ts`
+- Create: `src/render/beatView.ts`
+- Modify: `src/style.css`, `src/render/deckView.ts` (one line: expose `head`)
 
 **Interfaces:**
-- Produces: `class BandSplitter { constructor(sampleRate: number); process(mono: Float32Array): { low: Float32Array; mid: Float32Array; high: Float32Array } }`. Bands sum exactly to the input. Stateful across calls (continuous filters). Crossovers: 200 Hz and 4000 Hz, one-pole low-passes.
-
-- [ ] **Step 1: Write the failing tests** — `src/dsp/bandSplit.test.ts`:
+- Produces:
 
 ```ts
-import { describe, it, expect } from "vitest";
-import { BandSplitter } from "./bandSplit";
-
-const FS = 48000;
-
-function rms(a: Float32Array): number {
-  let s = 0;
-  for (const v of a) s += v * v;
-  return Math.sqrt(s / a.length);
+export interface BeatViewElements {
+  root: HTMLElement;
+  bpmText: HTMLSpanElement;
+  blocks: HTMLSpanElement[]; // length 4
 }
-
-describe("BandSplitter", () => {
-  it("bands sum exactly to the input", () => {
-    const s = new BandSplitter(FS);
-    const x = new Float32Array(512).map(() => Math.random() * 2 - 1);
-    const { low, mid, high } = s.process(x);
-    for (let i = 0; i < x.length; i++) {
-      expect(low[i]! + mid[i]! + high[i]!).toBeCloseTo(x[i]!, 5);
-    }
-  });
-
-  it("routes a 50 Hz tone mostly to low", () => {
-    const s = new BandSplitter(FS);
-    const x = Float32Array.from({ length: 9600 }, (_, i) => Math.sin((2 * Math.PI * 50 * i) / FS));
-    const { low, mid, high } = s.process(x);
-    expect(rms(low)).toBeGreaterThan(rms(mid) * 2);
-    expect(rms(low)).toBeGreaterThan(rms(high) * 2);
-  });
-
-  it("routes a 12 kHz tone mostly to high", () => {
-    const s = new BandSplitter(FS);
-    const x = Float32Array.from({ length: 9600 }, (_, i) => Math.sin((2 * Math.PI * 12000 * i) / FS));
-    const { low, mid, high } = s.process(x);
-    expect(rms(high)).toBeGreaterThan(rms(low) * 2);
-    expect(rms(high)).toBeGreaterThan(rms(mid) * 2);
-  });
-
-  it("routes a 1 kHz tone mostly to mid", () => {
-    const s = new BandSplitter(FS);
-    const x = Float32Array.from({ length: 9600 }, (_, i) => Math.sin((2 * Math.PI * 1000 * i) / FS));
-    const { low, mid, high } = s.process(x);
-    expect(rms(mid)).toBeGreaterThan(rms(low) * 2);
-    expect(rms(mid)).toBeGreaterThan(rms(high) * 2);
-  });
-
-  it("does not mutate its input and keeps filter state across calls", () => {
-    const s = new BandSplitter(FS);
-    const x = new Float32Array(64).fill(0.5);
-    s.process(x);
-    expect(Array.from(x)).toEqual(new Array(64).fill(0.5));
-    // Second call continues from previous state: low output keeps rising toward DC.
-    const second = s.process(x);
-    expect(second.low[0]!).toBeGreaterThan(0.1);
-  });
-});
+export interface BeatViewCallbacks {
+  onTap(): void;
+  onNudge(delta: number): void;
+}
+export function createBeatView(callbacks: BeatViewCallbacks): BeatViewElements;
+export function updateBeatView(
+  els: BeatViewElements,
+  state: { bpm: number | null; barPosition: number; confidence: number },
+): void;
 ```
 
-- [ ] **Step 2: Run** `npx vitest run src/dsp/bandSplit.test.ts` — expect FAIL (module missing).
+- `DeckElements` gains `head: HTMLElement` (the `.deck-head` div) so main.ts can append the beat view.
 
-- [ ] **Step 3: Implement** `src/dsp/bandSplit.ts`:
+- [ ] **Step 1: Implement** `src/render/beatView.ts` (DOM module — no test infra for DOM; keep it logic-free):
 
 ```ts
-/**
- * Time-domain 3-band split for waveform coloring. Two one-pole low-passes
- * define the crossovers; bands reconstruct the input exactly:
- *   low = LP200(x), mid = LP4k(x) - LP200(x), high = x - LP4k(x).
- * Stateful: filters run continuously across process() calls, so feed each
- * deck's blocks in order through its own instance.
- */
+/** BPM readout, 4-block bar indicator, and tap-1 / nudge controls for a deck. */
 
-const LOW_CROSSOVER_HZ = 200;
-const HIGH_CROSSOVER_HZ = 4000;
-
-export interface BandBlocks {
-  low: Float32Array;
-  mid: Float32Array;
-  high: Float32Array;
+export interface BeatViewElements {
+  root: HTMLElement;
+  bpmText: HTMLSpanElement;
+  blocks: HTMLSpanElement[];
 }
 
-class OnePoleLowPass {
-  private y = 0;
-  private readonly a: number;
-  constructor(cutoffHz: number, sampleRate: number) {
-    this.a = 1 - Math.exp((-2 * Math.PI * cutoffHz) / sampleRate);
-  }
-  next(x: number): number {
-    this.y += this.a * (x - this.y);
-    return this.y;
-  }
+export interface BeatViewCallbacks {
+  onTap(): void;
+  onNudge(delta: number): void;
 }
 
-export class BandSplitter {
-  private readonly lpLow: OnePoleLowPass;
-  private readonly lpHigh: OnePoleLowPass;
+const BLOCK_COUNT = 4;
+const CONFIDENT = 0.4; // below this the indicator dims
 
-  constructor(sampleRate: number) {
-    this.lpLow = new OnePoleLowPass(LOW_CROSSOVER_HZ, sampleRate);
-    this.lpHigh = new OnePoleLowPass(HIGH_CROSSOVER_HZ, sampleRate);
+export function createBeatView(callbacks: BeatViewCallbacks): BeatViewElements {
+  const root = document.createElement("div");
+  root.className = "beat";
+
+  const bpmText = document.createElement("span");
+  bpmText.className = "beat-bpm";
+  bpmText.textContent = "—";
+
+  const bar = document.createElement("span");
+  bar.className = "beat-bar";
+  const blocks: HTMLSpanElement[] = [];
+  for (let i = 0; i < BLOCK_COUNT; i++) {
+    const block = document.createElement("span");
+    block.className = "beat-block";
+    bar.append(block);
+    blocks.push(block);
   }
 
-  /** Split one block. Returns new arrays; never mutates `mono`. */
-  process(mono: Float32Array): BandBlocks {
-    const n = mono.length;
-    const low = new Float32Array(n);
-    const mid = new Float32Array(n);
-    const high = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      const x = mono[i]!;
-      const l = this.lpLow.next(x);
-      const m = this.lpHigh.next(x);
-      low[i] = l;
-      mid[i] = m - l;
-      high[i] = x - m;
-    }
-    return { low, mid, high };
-  }
+  const back = document.createElement("button");
+  back.textContent = "‹";
+  back.title = "nudge downbeat back one beat";
+  back.addEventListener("click", () => callbacks.onNudge(-1));
+
+  const tap = document.createElement("button");
+  tap.textContent = "1";
+  tap.title = "mark the current beat as beat 1";
+  tap.addEventListener("click", () => callbacks.onTap());
+
+  const fwd = document.createElement("button");
+  fwd.textContent = "›";
+  fwd.title = "nudge downbeat forward one beat";
+  fwd.addEventListener("click", () => callbacks.onNudge(1));
+
+  root.append(bpmText, bar, back, tap, fwd);
+  return { root, bpmText, blocks };
+}
+
+export function updateBeatView(
+  els: BeatViewElements,
+  state: { bpm: number | null; barPosition: number; confidence: number },
+): void {
+  const bpmLabel = state.bpm === null ? "—" : state.bpm.toFixed(1);
+  if (els.bpmText.textContent !== bpmLabel) els.bpmText.textContent = bpmLabel;
+  els.root.classList.toggle("beat-low-confidence", state.confidence < CONFIDENT);
+  els.blocks.forEach((block, i) => {
+    block.classList.toggle("beat-block-active", i === state.barPosition && state.bpm !== null);
+  });
 }
 ```
 
-- [ ] **Step 4: Run** `npm test` and `npx tsc --noEmit` — all pass.
-- [ ] **Step 5: Commit** `feat: 3-band time-domain splitter for waveform coloring`
+- [ ] **Step 2:** In `src/render/deckView.ts`, add `head: HTMLElement` to `DeckElements` and include `head` in the object returned by `createDeckView` (it's the existing `.deck-head` div).
+
+- [ ] **Step 3: Style** — append to `src/style.css`:
+
+```css
+.beat { display: flex; align-items: center; gap: 6px; margin-left: 12px; }
+.beat-bpm { min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+.beat-bar { display: inline-flex; gap: 3px; }
+.beat-block { width: 14px; height: 14px; border-radius: 3px; background: #232a35; }
+.beat-block-active { background: #4fd1ff; }
+.beat-low-confidence { opacity: 0.45; }
+.beat button { background: #1a2029; color: #d7dde5; border: 1px solid #2c3340; border-radius: 4px; padding: 1px 8px; cursor: pointer; }
+.beat button:hover { background: #29313d; }
+```
+
+- [ ] **Step 4: Run** `npm test` and `npx tsc --noEmit` — all pass (no new tests; DOM-only module).
+- [ ] **Step 5: Commit** `feat: beat view UI (bpm readout, bar blocks, tap/nudge)`
 
 ---
 
