@@ -56,7 +56,6 @@ interface DeckRuntime {
   stream: DeckStreams;
   canvas: HTMLCanvasElement;
   gridCtx: CanvasRenderingContext2D;
-  color: string;
   sampleRate: number;
   consumed: number | null;
   beatEngine: BeatEngine;
@@ -221,7 +220,6 @@ function buildRuntimes(): void {
       },
       canvas,
       gridCtx,
-      color: deck.color,
       sampleRate: handle.sampleRate,
       consumed: null,
       beatEngine,
@@ -257,7 +255,6 @@ function frame(): void {
         rt.beatEngine.recentBeats(),
         rt.consumed,
         config.samplesPerColumn,
-        rt.color,
       );
     }
   }

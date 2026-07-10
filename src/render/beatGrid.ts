@@ -10,8 +10,9 @@
 
 const SHOWN_BEATS = 4;      // newest beats drawn at their detected positions
 const MIN_SPACING_PX = 8;   // below this the projection is unreadable; skip it
-const DETECTED_ALPHA = 0.85;
-const PROJECTED_ALPHA = 0.3;
+const LINE_ALPHA = 0.85;    // detected and projected lines look the same
+const LINE_COLOR = "#c9ccd1"; // whitish gray, shared by all decks
+const MARKER_SIZE_PX = 6;   // triangle markers at the top and bottom of each line
 
 export interface GridLine {
   x: number;
@@ -64,14 +65,26 @@ export function drawBeatGrid(
   beats: readonly number[],
   rightEdgeSample: number,
   samplesPerColumn: number,
-  color: string,
 ): void {
   ctx.clearRect(0, 0, width, height);
   const lines = computeGridLines(beats, rightEdgeSample, samplesPerColumn, width);
-  ctx.fillStyle = color;
+  ctx.fillStyle = LINE_COLOR;
+  ctx.globalAlpha = LINE_ALPHA;
   for (const line of lines) {
-    ctx.globalAlpha = line.isDetected ? DETECTED_ALPHA : PROJECTED_ALPHA;
-    ctx.fillRect(Math.round(line.x), 0, 1, height);
+    const x = Math.round(line.x);
+    ctx.fillRect(x, 0, 1, height);
+    drawMarker(ctx, x, 0, 1);       // top triangle points down
+    drawMarker(ctx, x, height, -1); // bottom triangle points up
   }
   ctx.globalAlpha = 1;
+}
+
+/** Triangle at (x, y) pointing into the canvas (`dir` 1 = down, -1 = up). */
+function drawMarker(ctx: CanvasRenderingContext2D, x: number, y: number, dir: number): void {
+  ctx.beginPath();
+  ctx.moveTo(x - MARKER_SIZE_PX, y);
+  ctx.lineTo(x + MARKER_SIZE_PX, y);
+  ctx.lineTo(x, y + dir * MARKER_SIZE_PX);
+  ctx.closePath();
+  ctx.fill();
 }
