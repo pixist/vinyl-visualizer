@@ -6,6 +6,7 @@ export interface DeckElements {
   root: HTMLElement;
   head: HTMLElement;
   canvas: HTMLCanvasElement;
+  gridCanvas: HTMLCanvasElement;
   deviceSelect: HTMLSelectElement;
   modeSelect: HTMLSelectElement;
   chSelectL: HTMLSelectElement;
@@ -141,9 +142,14 @@ export function createDeckView(deck: DeckConfig, callbacks: DeckCallbacks): Deck
 
   const canvas = document.createElement("canvas");
   canvas.className = "deck-canvas";
+  const gridCanvas = document.createElement("canvas");
+  gridCanvas.className = "deck-grid";
+  const body = document.createElement("div");
+  body.className = "deck-body";
+  body.append(canvas, gridCanvas);
 
-  root.append(head, canvas);
-  return { root, head, canvas, deviceSelect, modeSelect, chSelectL, chSelectR };
+  root.append(head, body);
+  return { root, head, canvas, gridCanvas, deviceSelect, modeSelect, chSelectL, chSelectR };
 }
 
 export function mountDecks(

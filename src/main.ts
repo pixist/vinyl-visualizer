@@ -8,6 +8,7 @@ import { advanceDeck, type DeckStreams } from "./render/scrollDriver";
 import { BandSplitter } from "./dsp/bandSplit";
 import { BeatEngine } from "./audio/beatEngine";
 import { createBeatView, updateBeatView, type BeatViewElements } from "./render/beatView";
+import { drawBeatGrid } from "./render/beatGrid";
 
 const MAX_COLUMNS = 2048; // upper bound on columns redrawn in one frame
 
@@ -54,6 +55,8 @@ interface DeckRuntime {
   deckId: string;
   stream: DeckStreams;
   canvas: HTMLCanvasElement;
+  gridCtx: CanvasRenderingContext2D;
+  color: string;
   sampleRate: number;
   consumed: number | null;
   beatEngine: BeatEngine;
@@ -113,6 +116,16 @@ async function startAll(): Promise<void> {
   if (running) return;
   setStatus("requesting input...");
   try {
+    // Stored device IDs can rotate between browser sessions; fall back to the
+    // default input instead of failing with an OverconstrainedError.
+    const known = new Set((await listInputDevices()).map((d) => d.deviceId));
+    for (const deck of config.decks) {
+      if (deck.deviceId && !known.has(deck.deviceId)) {
+        deck.deviceId = null;
+        saveConfig(localStorage, config);
+        setStatus(`${deck.label}: saved input device is gone, using default`);
+      }
+    }
     const keys = [...new Set(config.decks.map(deviceKey))];
     for (const key of keys) {
       const decksOnDevice = config.decks.filter((d) => deviceKey(d) === key);
@@ -137,7 +150,8 @@ async function startAll(): Promise<void> {
     setStatus(statusSummary());
     rafId = requestAnimationFrame(frame);
   } catch (err) {
-    setStatus(`error: ${(err as Error).message}`);
+    const e = err as Error;
+    setStatus(`error: ${e.name}${e.message ? ` — ${e.message}` : ""}`);
     await stopAll();
   }
 }
@@ -150,6 +164,7 @@ async function stopAll(): Promise<void> {
   handles.clear();
   for (const view of views.values()) {
     view.canvas.getContext("2d")?.clearRect(0, 0, view.canvas.width, view.canvas.height);
+    view.gridCanvas.getContext("2d")?.clearRect(0, 0, view.gridCanvas.width, view.gridCanvas.height);
     view.head.querySelector(".beat")?.remove();
   }
   startBtn.textContent = "Start capture";
@@ -176,6 +191,11 @@ function buildRuntimes(): void {
     const canvas = view.canvas;
     canvas.width = canvas.clientWidth || 1200;
     canvas.height = canvas.clientHeight || 160;
+    const gridCanvas = view.gridCanvas;
+    gridCanvas.width = canvas.width;
+    gridCanvas.height = canvas.height;
+    const gridCtx = gridCanvas.getContext("2d");
+    if (!gridCtx) throw new Error("2D canvas context unavailable for beat grid");
 
     // Beat tracking
     view.head.querySelector(".beat")?.remove();
@@ -200,6 +220,8 @@ function buildRuntimes(): void {
         bands: new BandSplitter(handle.sampleRate),
       },
       canvas,
+      gridCtx,
+      color: deck.color,
       sampleRate: handle.sampleRate,
       consumed: null,
       beatEngine,
@@ -227,6 +249,17 @@ function frame(): void {
     rt.consumed = advanceDeck(rt.stream, rt.consumed, scratchL, scratchR, cap, config.samplesPerColumn);
     rt.beatEngine.advance();
     updateBeatView(rt.beatView, rt.beatEngine.state());
+    if (rt.consumed !== null) {
+      drawBeatGrid(
+        rt.gridCtx,
+        rt.canvas.width,
+        rt.canvas.height,
+        rt.beatEngine.recentBeats(),
+        rt.consumed,
+        config.samplesPerColumn,
+        rt.color,
+      );
+    }
   }
   rafId = requestAnimationFrame(frame);
 }

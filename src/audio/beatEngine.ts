@@ -26,6 +26,7 @@ const BPM_MEDIAN_WINDOW = 9;     // beats of history the displayed BPM is the me
 const PHASE_ENERGY_DECAY = 0.85; // per-bar decay of the downbeat energy accumulators
 const ACCENT_HOPS = 16;          // hops (~85 ms) integrated per beat for accent energy
 const ANCHOR_MARGIN = 1.5;       // re-anchor only when a phase is this much louder
+const MAX_TICK_HISTORY = 8;      // detected beat positions kept for the grid overlay
 
 // Module-level singleton: the WASM module is loaded once and shared by decks.
 const aubioModule = aubio();
@@ -52,6 +53,7 @@ export class BeatEngine {
   private isOffsetManual = false;
 
   private readonly bpmHistory: number[] = [];
+  private readonly tickSamples: number[] = [];
   private readonly phaseEnergy = new Float64Array(BEATS_PER_BAR);
   private accentPhase = 0;
   private accentHopsLeft = 0;
@@ -120,6 +122,8 @@ export class BeatEngine {
         // periods actually elapsed (>=1 when aubio skipped soft beats).
         this.gridBeat = Math.max(this.gridBeat + 1, this.beatAt(hopStart));
         this.anchorSample = hopStart;
+        this.tickSamples.push(hopStart);
+        if (this.tickSamples.length > MAX_TICK_HISTORY) this.tickSamples.shift();
         this.startAccentWindow();
       }
       this.accumulateAccentEnergy(this.hopScratch);
@@ -196,8 +200,14 @@ export class BeatEngine {
     this.barOffset += delta;
   }
 
+  /** Absolute sample positions of the most recent detected beats (oldest first). */
+  recentBeats(): readonly number[] {
+    return this.tickSamples;
+  }
+
   /** Forget everything: fresh aubio tracker, BPM history, grid, and bar anchor. */
   resetAnalysis(): void {
+    this.tickSamples.length = 0;
     void aubioModule.then(({ Tempo }) => {
       this.tempo = new Tempo(FRAME, HOP, this.sampleRate);
     });

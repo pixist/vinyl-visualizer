@@ -37,7 +37,9 @@ body {
 .gain { margin-left: auto; }
 .delay input[type="range"] { width: 180px; }
 .gain input[type="range"] { width: 120px; }
+.deck-body { position: relative; }
 .deck-canvas { display: block; width: 100%; height: 160px; background: #06080b; }
+.deck-grid { position: absolute; inset: 0; width: 100%; height: 160px; pointer-events: none; }
 .deck-mode, .deck-ch { margin-left: 8px; background: #12161d; color: #d7dde5; border: 1px solid #2c3340; border-radius: 6px; padding: 4px 6px; }
 .beat { display: flex; align-items: center; gap: 6px; margin-left: 12px; }
 .beat-bpm { min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
