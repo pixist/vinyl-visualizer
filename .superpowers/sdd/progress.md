@@ -5,3 +5,4 @@ Task 3: complete (commits 00295ca..dbee4db, review clean; browser verify deferre
 Task 4: complete (commit f622986, review clean)
 Task 5: complete (commit 9bde558, review clean)
 Task 6: complete (commit 0fe5015, review clean)
+Final review: With fixes -> fixed in ae17de0 (63/63 tests). Minor deferrals: restart-on-mode-change (TODO in main.ts), rmsBins/binWaveform bin-edge duplication, in-place config mutation (pre-existing pattern).
