@@ -195,4 +195,27 @@ export class BeatEngine {
     this.isOffsetManual = true;
     this.barOffset += delta;
   }
+
+  /** Forget everything: fresh aubio tracker, BPM history, grid, and bar anchor. */
+  resetAnalysis(): void {
+    void aubioModule.then(({ Tempo }) => {
+      this.tempo = new Tempo(FRAME, HOP, this.sampleRate);
+    });
+    this.tempo = null;
+    this.bpmHistory.length = 0;
+    this.lastBpm = null;
+    this.lastConfidence = 0;
+    this.gridBeat = 0;
+    this.anchorSample = 0;
+    this.consumed = null;
+    this.resetBar();
+  }
+
+  /** Forget only the bar anchor: re-runs downbeat auto-detection. */
+  resetBar(): void {
+    this.isOffsetManual = false;
+    this.barOffset = 0;
+    this.phaseEnergy.fill(0);
+    this.accentHopsLeft = 0;
+  }
 }

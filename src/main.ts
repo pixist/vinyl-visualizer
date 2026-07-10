@@ -183,6 +183,8 @@ function buildRuntimes(): void {
     const beatView = createBeatView({
       onTap: () => beatEngine.tap1(),
       onNudge: (d) => beatEngine.nudge(d),
+      onResetBar: () => beatEngine.resetBar(),
+      onResetAnalysis: () => beatEngine.resetAnalysis(),
     });
     view.head.append(beatView.root);
 

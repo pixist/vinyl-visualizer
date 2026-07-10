@@ -96,6 +96,60 @@ describe("BeatEngine (aubio tempo)", () => {
     for (const p of samples) expect(p).toBe(0);
   });
 
+  it("resetAnalysis clears the BPM and relearns it from fresh audio", async () => {
+    const layout = createRingBuffer(FS * 40);
+    const writer = new RingWriter(layout);
+    const engine = new BeatEngine(new RingReader(layout), null, "mono-sum", FS);
+    await settle();
+
+    writeKickPattern(writer, engine);
+    expect(engine.state().bpm).not.toBeNull();
+
+    engine.resetAnalysis();
+    await settle();
+    expect(engine.state().bpm).toBeNull();
+
+    writeKickPattern(writer, engine);
+    const s = engine.state();
+    expect(s.bpm).not.toBeNull();
+    expect(s.bpm!).toBeGreaterThan(118);
+    expect(s.bpm!).toBeLessThan(122);
+  });
+
+  it("resetBar re-enables downbeat auto-anchoring after a manual nudge", async () => {
+    const layout = createRingBuffer(FS * 60);
+    const writer = new RingWriter(layout);
+    const engine = new BeatEngine(new RingReader(layout), null, "mono-sum", FS);
+    await settle();
+
+    engine.nudge(2); // manual, deliberately wrong
+    engine.resetBar();
+
+    // Accented pattern (every 4th kick 3x louder) should now auto-anchor.
+    const samples: number[] = [];
+    const chunk = new Float32Array(FS / 10);
+    for (let c = 0; c < 250; c++) {
+      const t0 = c * chunk.length;
+      for (let i = 0; i < chunk.length; i++) {
+        const t = (t0 + i) / FS;
+        const sinceKick = t % 0.5;
+        const kickIndex = Math.floor(t / 0.5);
+        const amp = kickIndex % 4 === 0 ? 1.0 : 0.3;
+        chunk[i] = sinceKick < 0.12
+          ? amp * Math.sin(2 * Math.PI * 60 * sinceKick) * Math.exp(-sinceKick * 30)
+          : 0;
+      }
+      writer.write(chunk);
+      engine.advance();
+      const t = (c + 1) * 0.1;
+      if (t > 20 && Math.abs((t - 0.1) % 2) < 1e-9) {
+        samples.push(engine.state().barPosition);
+      }
+    }
+    expect(samples.length).toBeGreaterThan(0);
+    for (const p of samples) expect(p).toBe(0);
+  });
+
   it("reports null bpm for silence", async () => {
     const layout = createRingBuffer(FS * 10);
     const writer = new RingWriter(layout);
